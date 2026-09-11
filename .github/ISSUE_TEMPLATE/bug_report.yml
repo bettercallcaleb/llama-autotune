@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible profiling, tuning, build, or process-control issue
+title: "[bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "Please sanitize paths, API keys, hostnames, GPU UUIDs, and private model names before posting."
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, GPU(s), driver/toolkit, llama.cpp build/commit, Python version.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or report
