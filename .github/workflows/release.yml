@@ -1,0 +1,136 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TAG: v0.1.8
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip
+          mkdir -p dist
+          python -m pip wheel . --no-deps -w dist
+
+      - name: Build portable Linux bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG=dist/llama-autotune-v0.1.8-linux-portable
+          mkdir -p "$PKG"
+          cp dist/llama_autotune-0.1.8-py3-none-any.whl "$PKG/"
+
+          cat > "$PKG/llama-autotune" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          PYTHON="${PYTHON:-python3}"
+          VENV="$HERE/.venv"
+          WHEEL="$(find "$HERE" -maxdepth 1 -name 'llama_autotune-*.whl' -print -quit)"
+          if ! command -v "$PYTHON" >/dev/null 2>&1; then
+            echo "error: python3 is required (Python 3.11+)" >&2
+            exit 2
+          fi
+          if ! "$PYTHON" - <<'PY' >/dev/null 2>&1
+          import sys
+          raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+          PY
+          then
+            echo "error: Python 3.11+ is required" >&2
+            exit 2
+          fi
+          if [ ! -x "$VENV/bin/llama-autotune" ]; then
+            echo "[llama-autotune] first run: creating local environment..." >&2
+            "$PYTHON" -m venv "$VENV"
+            "$VENV/bin/python" -m pip install --disable-pip-version-check --no-input "$WHEEL"
+          fi
+          exec "$VENV/bin/llama-autotune" "$@"
+          SH
+          chmod +x "$PKG/llama-autotune"
+
+          cat > "$PKG/install.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          PREFIX="${PREFIX:-$HOME/.local/share/llama-autotune}"
+          BINDIR="${BINDIR:-$HOME/.local/bin}"
+          mkdir -p "$PREFIX" "$BINDIR"
+          cp "$HERE"/llama_autotune-*.whl "$PREFIX/"
+          cp "$HERE/llama-autotune" "$PREFIX/"
+          chmod +x "$PREFIX/llama-autotune"
+          ln -sfn "$PREFIX/llama-autotune" "$BINDIR/llama-autotune"
+          echo "Installed: $BINDIR/llama-autotune"
+          SH
+          chmod +x "$PKG/install.sh"
+
+          cat > "$PKG/README.txt" <<'TXT'
+          llama-autotune v0.1.8 — Linux portable package
+
+          Requirements:
+          - Linux
+          - Python 3.11+
+          - llama.cpp source/build as required by the command you run
+
+          Run without installing:
+            ./llama-autotune --help
+
+          First run creates ./.venv and installs the bundled wheel locally.
+          It does not modify system Python packages.
+
+          Optional user install:
+            ./install.sh
+            ~/.local/bin/llama-autotune --help
+
+          Project: https://github.com/bettercallcaleb/llama-autotune
+          TXT
+
+          (cd dist && zip -qr llama-autotune-v0.1.8-linux-portable.zip llama-autotune-v0.1.8-linux-portable)
+          rm -rf "$PKG"
+
+      - name: Smoke-test portable bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/lat-release-test
+          cd /tmp/lat-release-test
+          unzip -q "$GITHUB_WORKSPACE/dist/llama-autotune-v0.1.8-linux-portable.zip"
+          ./llama-autotune-v0.1.8-linux-portable/llama-autotune --help
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum llama_autotune-0.1.8-py3-none-any.whl llama-autotune-v0.1.8-linux-portable.zip > SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping creation."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            dist/llama_autotune-0.1.8-py3-none-any.whl \
+            dist/llama-autotune-v0.1.8-linux-portable.zip \
+            dist/SHA256SUMS \
+            --target "$GITHUB_SHA" \
+            --title "llama-autotune v0.1.8" \
+            --notes-file RELEASE_NOTES.md
